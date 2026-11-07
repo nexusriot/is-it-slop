@@ -69,6 +69,52 @@ musl_target() {
     esac
 }
 
+host_arch() {
+    local arch
+    arch="$(uname -m)"
+    [[ "${arch}" == arm64 ]] && arch=aarch64
+    printf '%s\n' "${arch}"
+}
+
+# GNU cross toolchain prefix for a *-linux-gnu target (e.g. aarch64-linux-gnu).
+cross_gcc_prefix() {
+    case "$1" in
+        armv7-*-gnueabihf) echo arm-linux-gnueabihf ;;
+        *-linux-gnu*) echo "${1%%-*}-linux-gnu" ;;
+        *) return 1 ;;
+    esac
+}
+
+is_foreign_linux_gnu() {
+    [[ "$1" == *-linux-gnu* && "${1%%-*}" != "$(host_arch)" ]]
+}
+
+# Whether this host can build the target with the current BUILDER/STATIC settings.
+can_build_target() {
+    local target="$1"
+    [[ "${BUILDER}" != cargo ]] && return 0
+    if [[ "${STATIC}" == 1 ]]; then
+        [[ "${target%%-*}" == "$(host_arch)" ]]
+        return
+    fi
+    is_foreign_linux_gnu "${target}" || return 0
+    command -v "$(cross_gcc_prefix "${target}")-gcc" >/dev/null
+}
+
+# Plain-cargo cross build of a *-linux-gnu target: aws-lc-sys compiles C and the final link needs
+# the matching GNU toolchain (Debian/Ubuntu: gcc-aarch64-linux-gnu; Fedora: gcc-aarch64-linux-gnu).
+setup_cross_gnu() {
+    local target="$1"
+    is_foreign_linux_gnu "${target}" || return 0
+    local prefix
+    prefix="$(cross_gcc_prefix "${target}")"
+    command -v "${prefix}-gcc" >/dev/null \
+        || die "cross compiler ${prefix}-gcc not found for ${target}; install gcc-${prefix} (apt/dnf), or use BUILDER=zigbuild or BUILDER=cross"
+    local env_target="${target//-/_}"
+    export "CC_${env_target}=${prefix}-gcc" "CXX_${env_target}=${prefix}-g++" "AR_${env_target}=${prefix}-ar"
+    export "CARGO_TARGET_${env_target^^}_LINKER=${prefix}-gcc"
+}
+
 container_engine() {
     local e
     for e in podman docker; do
@@ -102,6 +148,14 @@ build_binary() {
             *) die "unknown BUILDER '${BUILDER}' (expected cargo, cross or zigbuild)" ;;
         esac
 
+        if [[ "${BUILDER}" == cargo ]]; then
+            setup_cross_gnu "${target}"
+            if command -v rustup >/dev/null && ! rustup target list --installed | grep -qx "${target}"; then
+                log "Adding rust target ${target}"
+                rustup target add "${target}" >&2
+            fi
+        fi
+
         log "Building ${BIN_NAME} for ${target} (profile=${PROFILE}, builder=${BUILDER})"
         # Called inside $(...), where errexit isn't inherited, so fail explicitly.
         (cd "${ROOT_DIR}" && "${cmd[@]}" "${args[@]}" >&2) || die "cargo build failed for ${target}"
@@ -118,8 +172,8 @@ build_static_in_container() {
     local engine
     engine="$(container_engine)"
     [[ -n "${engine}" ]] || die "static build needs musl-gcc on the host, or docker/podman to build in ${STATIC_IMAGE}"
-    [[ "${target%%-*}" == "$(uname -m)" ]] \
-        || die "container static builds only support the host arch ($(uname -m)); use BUILDER=cross for ${target}"
+    [[ "${target%%-*}" == "$(host_arch)" ]] \
+        || die "container static builds only support the host arch ($(host_arch)); use BUILDER=cross for ${target}"
 
     log "Building ${BIN_NAME} for ${target} in ${STATIC_IMAGE} via ${engine} (profile=${PROFILE})"
     # Cargo's registry lives in a named volume so repeat builds don't re-download crates.
@@ -132,6 +186,23 @@ build_static_in_container() {
             && rustup target add ${target} >/dev/null 2>&1; \
             cargo build $* && chown -R $(id -u):$(id -g) /src/target" >&2 \
         || die "container build failed for ${target}"
+}
+
+# Debian Depends read straight from the ELF, for binaries dpkg-shlibdeps can't resolve
+# (another architecture than the host's dpkg).
+elf_deb_depends() {
+    local bin="$1" glibc lib deps
+    glibc="$(readelf -W --version-info "${bin}" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1)"
+    [[ -n "${glibc}" ]] || die "could not read the glibc version requirement of ${bin}"
+    deps="libc6 (>= ${glibc})"
+    while read -r lib; do
+        case "${lib}" in
+            libc.so.*|libm.so.*|libdl.so.*|libpthread.so.*|librt.so.*|ld-linux*) ;;
+            libgcc_s.so.1) deps+=", libgcc-s1" ;;
+            *) die "no Debian package mapping for ${lib} needed by ${bin}" ;;
+        esac
+    done < <(readelf -d "${bin}" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
+    printf '%s\n' "${deps}"
 }
 
 deb_arch() {

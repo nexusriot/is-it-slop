@@ -61,13 +61,13 @@ rpm-static: ## Build a fully static (musl) .rpm for TARGET's arch
 packages: deb rpm ## Build both .deb and .rpm for TARGET
 
 .PHONY: all
-all: ## Build PACKAGES for every target in TARGETS (default: this OS's usual targets)
+all: ## Build PACKAGES for every target in TARGETS (default: this OS's usual targets it has toolchains for)
 	PACKAGES="$(PACKAGES)" scripts/build-all.sh $(TARGETS)
 
 .PHONY: linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64 windows-x86_64 windows-aarch64
 linux-x86_64: ## Archive + deb + rpm for x86_64-unknown-linux-gnu
 	PACKAGES="$(PACKAGES)" scripts/build-all.sh x86_64-unknown-linux-gnu
-linux-aarch64: ## Archive + deb + rpm for aarch64-unknown-linux-gnu (needs BUILDER=cross|zigbuild off-arch)
+linux-aarch64: ## Archive + deb + rpm for aarch64-unknown-linux-gnu (off-arch: gcc-aarch64-linux-gnu, or BUILDER=cross|zigbuild)
 	PACKAGES="$(PACKAGES)" scripts/build-all.sh aarch64-unknown-linux-gnu
 macos-aarch64: ## Archive for aarch64-apple-darwin (run on macOS)
 	PACKAGES=archive scripts/build-all.sh aarch64-apple-darwin

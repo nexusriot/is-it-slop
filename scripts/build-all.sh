@@ -18,15 +18,20 @@ if [[ $# -gt 0 ]]; then
     TARGETS=("$@")
 else
     case "$(uname -s)" in
-        Linux) TARGETS=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu) ;;
-        Darwin) TARGETS=(aarch64-apple-darwin x86_64-apple-darwin) ;;
-        MINGW* | MSYS* | CYGWIN*) TARGETS=(x86_64-pc-windows-msvc aarch64-pc-windows-msvc) ;;
+        Linux) CANDIDATES=(x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu) ;;
+        Darwin) CANDIDATES=(aarch64-apple-darwin x86_64-apple-darwin) ;;
+        MINGW* | MSYS* | CYGWIN*) CANDIDATES=(x86_64-pc-windows-msvc aarch64-pc-windows-msvc) ;;
         *) die "unsupported host $(uname -s); pass targets explicitly" ;;
     esac
-fi
-
-if [[ "${BUILDER}" == cargo && "${STATIC}" != 1 ]] && command -v rustup >/dev/null; then
-    rustup target add "${TARGETS[@]}" >&2
+    # Default list: skip cross targets this host has no toolchain for, rather than failing.
+    TARGETS=()
+    for target in "${CANDIDATES[@]}"; do
+        if can_build_target "${target}"; then
+            TARGETS+=("${target}")
+        else
+            log "Skipping ${target}: no cross toolchain (install gcc-$(cross_gcc_prefix "${target}"), or set BUILDER=zigbuild|cross)"
+        fi
+    done
 fi
 
 failed=()

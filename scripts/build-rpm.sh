@@ -42,7 +42,6 @@ Summary:        $(package_field description)
 License:        $(workspace_license)
 URL:            $(repo_homepage)
 Packager:       $(maintainer)
-BuildArch:      ${ARCH}
 # TLS (rustls) verifies against the system CA store.
 Requires:       ca-certificates
 Source0:        ${BIN_NAME}
@@ -73,6 +72,7 @@ install -Dm644 %{SOURCE2} %{buildroot}%{_licensedir}/%{name}/LICENSE
 %license %{_licensedir}/%{name}/LICENSE
 EOF
 
+# --target alone sets the package arch; a BuildArch tag would make rpmbuild refuse foreign arches.
 RPMBUILD_ARGS=(-bb --quiet --target "${ARCH}" "SPECS/${PKG_NAME}.spec")
 
 if [[ -z "${ENGINE}" ]]; then

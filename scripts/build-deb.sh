@@ -42,6 +42,10 @@ if [[ "${STATIC}" == 1 ]]; then
     # Fully static binary: no library dependencies (CA certificates are still recommended below).
     DEPENDS_LINE=""
     DEB_SUFFIX="_static"
+elif [[ "${ARCH}" != "$(dpkg --print-architecture 2>/dev/null)" ]]; then
+    # dpkg-shlibdeps only knows the host architecture's libraries; read the ELF directly instead.
+    DEPENDS_LINE="Depends: $(elf_deb_depends "${BIN_PATH}")"
+    DEB_SUFFIX=""
 else
     # Derive Depends (libc6 version floor, libgcc-s1, ...) from the binary's shared-library needs.
     command -v dpkg-shlibdeps >/dev/null || die "dpkg-shlibdeps not found (apt install dpkg-dev)"
